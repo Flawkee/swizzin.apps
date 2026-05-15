@@ -248,7 +248,7 @@ function _dashboard() {
         fi
     done
 
-    icon_url="https://raw.githubusercontent.com/Flawkee/hostingbydesign-custom-apps/main/seerr.png"
+    icon_url="https://raw.githubusercontent.com/Flawkee/swizzin.apps/main/seerr.png"
     if [[ -n "$icon_dir" ]]; then
         if curl -fsSL -o "$icon_dir/seerr.png" "$icon_url" 2>>"$log"; then
             echo "Icon installed to $icon_dir/seerr.png"
