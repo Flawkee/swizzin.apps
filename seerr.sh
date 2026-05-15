@@ -99,13 +99,6 @@ function _seerr_install() {
     run_as_user "mkdir -p '$target_home/seerr' && tar --strip-components=1 -C '$target_home/seerr' -xzvf '$target_home/seerr.tar.gz' && rm '$target_home/seerr.tar.gz'" >> "$log" 2>&1
     echo "Code extracted"
 
-    # When we are wiring nginx, build seerr with /seerr as its base URL.
-    if $SUDO_MODE; then
-        SEERR_BASEURL_BUILD='export seerr_BASEURL="/seerr";'
-    else
-        SEERR_BASEURL_BUILD=''
-    fi
-
     # Bypass Node version requirement, build with latest LTS.
     run_as_user "sed -i 's|engine-strict=true|engine-strict=false|g' '$target_home/seerr/.npmrc'"
 
@@ -124,7 +117,6 @@ function _seerr_install() {
     # Limit CPU
     run_as_user "sed -i 's|256000,|256000,\n    cpus: 6,|g' '$target_home/seerr/next.config.js'"
     run_as_user "
-        $SEERR_BASEURL_BUILD
         export NVM_DIR=\"\$HOME/.nvm\"
         [ -s \"\$NVM_DIR/nvm.sh\" ] && . \"\$NVM_DIR/nvm.sh\"
         pnpm --prefix '$target_home/seerr' build
@@ -207,7 +199,7 @@ location /seerr {
 }
 
 location /seerr/ {
-    proxy_pass              http://127.0.0.1:${SEERR_PORT}/seerr/;
+    proxy_pass              http://127.0.0.1:${SEERR_PORT}/;
     proxy_set_header        X-Real-IP               \$remote_addr;
     proxy_set_header        Host                    \$http_host;
     proxy_set_header        X-Forwarded-For         \$proxy_add_x_forwarded_for;
@@ -215,14 +207,15 @@ location /seerr/ {
     proxy_http_version      1.1;
     proxy_set_header        Upgrade                 \$http_upgrade;
     proxy_set_header        Connection              "Upgrade";
-    proxy_redirect          off;
+    # Rewrite any redirect seerr sends (e.g. /setup, /login) back into /seerr/
+    proxy_redirect          ~^/(.*) /seerr/\$1;
 
 ${auth_block}
 
     # Allow the seerr API through if you enable Auth on the block above
     location /seerr/api {
         auth_request off;
-        proxy_pass http://127.0.0.1:${SEERR_PORT}/seerr/api;
+        proxy_pass http://127.0.0.1:${SEERR_PORT}/api;
     }
 }
 EOF
@@ -237,26 +230,12 @@ EOF
 }
 
 function _dashboard() {
-    # Drop the icon next to the other dashboard icons. We try to mirror an
-    # existing app's icon directory so we land in the right place regardless
-    # of swizzin layout differences.
-    icon_dir=""
-    for candidate in /srv/panel/static/img/dashboard /opt/swizzin/core/static/img/dashboard /srv/panel/static/img; do
-        if [[ -d "$candidate" ]]; then
-            icon_dir="$candidate"
-            break
-        fi
-    done
-
+    icon_dir="/opt/swizzin/static/img/apps"
     icon_url="https://raw.githubusercontent.com/Flawkee/swizzin.apps/main/seerr.png"
-    if [[ -n "$icon_dir" ]]; then
-        if curl -fsSL -o "$icon_dir/seerr.png" "$icon_url" 2>>"$log"; then
-            echo "Icon installed to $icon_dir/seerr.png"
-        else
-            echo "Could not download seerr icon from $icon_url (continuing without custom icon)."
-        fi
+    if curl -fsSL -o "$icon_dir/seerr.png" "$icon_url" 2>>"$log"; then
+        echo "Icon installed to $icon_dir/seerr.png"
     else
-        echo "Could not locate swizzin dashboard image dir; skipping icon."
+        echo "Could not download seerr icon from $icon_url (continuing without custom icon)."
     fi
 
     profiles="/opt/swizzin/core/custom/profiles.py"
@@ -309,9 +288,7 @@ with open(p, "w") as f:
     f.write(t.rstrip() + "\n")
 PY
         fi
-        for candidate in /srv/panel/static/img/dashboard /opt/swizzin/core/static/img/dashboard /srv/panel/static/img; do
-            rm -f "$candidate/seerr.png"
-        done
+        rm -f /opt/swizzin/static/img/apps/seerr.png
         systemctl restart panel 2>/dev/null || true
     fi
 }
