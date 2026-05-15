@@ -64,6 +64,17 @@ function _port() {
     comm -23 <(seq "${LOW_BOUND}" "${UPPER_BOUND}" | sort) <(ss -Htan | awk '{print $4}' | cut -d':' -f2 | sort -u) | shuf | head -n 1
 }
 
+# Check if an app is installed via lock file (user or system level) or running process.
+# Usage: _app_is_installed <lockname> <process-search-term>
+_app_is_installed() {
+    local lockname="$1"
+    local proc="$2"
+    [[ -f "$target_home/.install/.${lockname}.lock" ]] && return 0
+    [[ -f "/install/.${lockname}.lock" ]] && return 0
+    pgrep -fa "$proc" > /dev/null 2>&1 && return 0
+    return 1
+}
+
 function _get_latest_release() {
     case "$(dpkg --print-architecture)" in
         "amd64") arch='amd64' ;;
@@ -124,7 +135,7 @@ listen_addr = "127.0.0.1:${UNPACKERR_PORT}"
 urlbase = "/unpackerr"
 EOF
 
-    if [[ -f "$target_home/.install/.sonarr.lock" ]]; then
+    if _app_is_installed "sonarr" "Sonarr"; then
         sonarr_base=$(sed -n 's|.*<UrlBase>\(.*\)</UrlBase>|\1|p' "$target_home/.config/Sonarr/config.xml")
         sonarr_api=$(sed -n 's|.*<ApiKey>\(.*\)</ApiKey>|\1|p' "$target_home/.config/Sonarr/config.xml")
         sonarr_port=$(sed -n 's|.*<Port>\(.*\)</Port>|\1|p' "$target_home/.config/Sonarr/config.xml")
@@ -141,7 +152,7 @@ EOF
 EOF
     fi
 
-    if [[ -f "$target_home/.install/.radarr.lock" ]]; then
+    if _app_is_installed "radarr" "Radarr"; then
         radarr_api=$(sed -n 's|.*<ApiKey>\(.*\)</ApiKey>|\1|p' "$target_home/.config/Radarr/config.xml")
         radarr_port=$(sed -n 's|.*<Port>\(.*\)</Port>|\1|p' "$target_home/.config/Radarr/config.xml")
         radarr_base=$(sed -n 's|.*<UrlBase>\(.*\)</UrlBase>|\1|p' "$target_home/.config/Radarr/config.xml")
@@ -158,7 +169,7 @@ EOF
 EOF
     fi
 
-    if [[ -f "$target_home/.install/.lidarr.lock" ]]; then
+    if _app_is_installed "lidarr" "Lidarr"; then
         lidarr_api=$(sed -n 's|.*<ApiKey>\(.*\)</ApiKey>|\1|p' "$target_home/.config/Lidarr/config.xml")
         lidarr_port=$(sed -n 's|.*<Port>\(.*\)</Port>|\1|p' "$target_home/.config/Lidarr/config.xml")
         lidarr_base=$(sed -n 's|.*<UrlBase>\(.*\)</UrlBase>|\1|p' "$target_home/.config/Lidarr/config.xml")

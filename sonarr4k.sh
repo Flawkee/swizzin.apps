@@ -63,6 +63,17 @@ function _port() {
     comm -23 <(seq "${LOW_BOUND}" "${UPPER_BOUND}" | sort) <(ss -Htan | awk '{print $4}' | cut -d':' -f2 | sort -u) | shuf | head -n 1
 }
 
+# Check if an app is installed via lock file (user or system level) or running process.
+# Usage: _app_is_installed <lockname> <process-search-term>
+_app_is_installed() {
+    local lockname="$1"
+    local proc="$2"
+    [[ -f "$target_home/.install/.${lockname}.lock" ]] && return 0
+    [[ -f "/install/.${lockname}.lock" ]] && return 0
+    pgrep -fa "$proc" > /dev/null 2>&1 && return 0
+    return 1
+}
+
 function _systemd() {
     run_as_user "mkdir -p '$target_home/.config/systemd/user/'"
     tmp_unit="$(mktemp)"
@@ -86,7 +97,7 @@ SERVICE
 }
 
 function _install() {
-    if [[ ! -f "$target_home/.install/.sonarr.lock" ]]; then
+    if ! _app_is_installed "sonarr" "Sonarr"; then
         echo "Sonarr is not installed. Exiting..."
         exit 1
     fi
