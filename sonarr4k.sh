@@ -100,14 +100,23 @@ _find_sonarr_binary() {
 }
 
 function _systemd() {
-    local sonarr_bin
+    local sonarr_bin sonarr_dir
     sonarr_bin=$(_find_sonarr_binary) || {
         echo "Cannot locate Sonarr binary. Is Sonarr installed and running?"
         exit 1
     }
+    sonarr_dir=$(dirname "$sonarr_bin")
     echo "Using Sonarr binary: $sonarr_bin"
 
-    run_as_user "mkdir -p '$target_home/.config/systemd/user/'"
+    # Mirror Environment= lines from the system sonarr service so the .NET
+    # runtime (bundled in the same directory as the binary) can initialise
+    # correctly when run as a second instance.
+    local extra_env=""
+    while IFS= read -r line; do
+        [[ "$line" =~ ^Environment= ]] && extra_env+="$line"$'\n'
+    done < <(systemctl cat sonarr 2>/dev/null)
+
+    run_as_user "mkdir -p '$target_home/.config/systemd/user/' '$target_home/.tmp'"
     tmp_unit="$(mktemp)"
     cat > "$tmp_unit" << SERVICE
 [Unit]
@@ -117,8 +126,10 @@ After=syslog.target network.target
 [Service]
 Type=simple
 Environment="TMPDIR=%h/.tmp"
-ExecStart=$sonarr_bin -nobrowser -data=%h/.config/Sonarr4k
-WorkingDirectory=%h
+${extra_env}ExecStart=$sonarr_bin -nobrowser -data=%h/.config/Sonarr4k
+WorkingDirectory=$sonarr_dir
+TimeoutStopSec=20
+KillMode=process
 Restart=on-failure
 
 [Install]

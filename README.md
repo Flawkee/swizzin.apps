@@ -11,8 +11,6 @@ Each script handles download, build/config (auto-picked free port), and a system
 | [seerr.sh](seerr.sh) | Seerr | `/seerr` | Builds from source via pnpm. No native base URL support — nginx handles path rewriting via `sub_filter` + a dedicated `/api/` location. |
 | [sonarr4k.sh](sonarr4k.sh) | Sonarr 4K | `/sonarr4k` | Second Sonarr instance for 4K content. Requires Sonarr already installed. |
 | [radarr4k.sh](radarr4k.sh) | Radarr 4K | `/radarr4k` | Second Radarr instance for 4K content. Requires Radarr already installed. |
-| [unpackerr.sh](unpackerr.sh) | Unpackerr | `/unpackerr` | Auto-detects installed arrs (Sonarr, Radarr, Lidarr) and wires their API keys into the config. |
-| [unpackerr4k.sh](unpackerr4k.sh) | Unpackerr 4K | `/unpackerr4k` | Separate Unpackerr instance wired to sonarr4k + radarr4k. Separate binary, config, service and port from the standard Unpackerr. |
 
 ## Usage
 

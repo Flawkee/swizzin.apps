@@ -100,14 +100,23 @@ _find_radarr_binary() {
 }
 
 function _systemd() {
-    local radarr_bin
+    local radarr_bin radarr_dir
     radarr_bin=$(_find_radarr_binary) || {
         echo "Cannot locate Radarr binary. Is Radarr installed and running?"
         exit 1
     }
+    radarr_dir=$(dirname "$radarr_bin")
     echo "Using Radarr binary: $radarr_bin"
 
-    run_as_user "mkdir -p '$target_home/.config/systemd/user/'"
+    # Mirror Environment= lines from the system radarr service so the .NET
+    # runtime (bundled in the same directory as the binary) can initialise
+    # correctly when run as a second instance.
+    local extra_env=""
+    while IFS= read -r line; do
+        [[ "$line" =~ ^Environment= ]] && extra_env+="$line"$'\n'
+    done < <(systemctl cat radarr 2>/dev/null)
+
+    run_as_user "mkdir -p '$target_home/.config/systemd/user/' '$target_home/.tmp'"
     tmp_unit="$(mktemp)"
     cat > "$tmp_unit" << SERVICE
 [Unit]
@@ -117,11 +126,11 @@ After=syslog.target network.target
 [Service]
 Type=simple
 Environment="TMPDIR=%h/.tmp"
-ExecStart=$radarr_bin -nobrowser -data=%h/.config/Radarr4k
+${extra_env}ExecStart=$radarr_bin -nobrowser -data=%h/.config/Radarr4k
+WorkingDirectory=$radarr_dir
 TimeoutStopSec=20
 KillMode=process
 Restart=on-failure
-WorkingDirectory=%h
 
 [Install]
 WantedBy=default.target
