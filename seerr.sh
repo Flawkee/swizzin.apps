@@ -204,19 +204,39 @@ location /seerr/ {
     proxy_set_header        Host                    \$http_host;
     proxy_set_header        X-Forwarded-For         \$proxy_add_x_forwarded_for;
     proxy_set_header        X-Forwarded-Proto       \$scheme;
+    proxy_set_header        Accept-Encoding         "";
     proxy_http_version      1.1;
     proxy_set_header        Upgrade                 \$http_upgrade;
     proxy_set_header        Connection              "Upgrade";
     # Rewrite any redirect seerr sends (e.g. /setup, /login) back into /seerr/
     proxy_redirect          ~^/(.*) /seerr/\$1;
 
+    # Rewrite absolute paths in HTML responses so the browser always requests
+    # /seerr/... — handled by this same location block, no extra rules needed.
+    sub_filter_once         off;
+    sub_filter_types        text/html;
+    sub_filter              'src="/'    'src="/seerr/';
+    sub_filter              'href="/'   'href="/seerr/';
+    sub_filter              'action="/' 'action="/seerr/';
+
 ${auth_block}
 
-    # Allow the seerr API through if you enable Auth on the block above
     location /seerr/api {
         auth_request off;
         proxy_pass http://127.0.0.1:${SEERR_PORT}/api;
     }
+}
+
+# Seerr's JS makes API calls to /api/v1/... with absolute paths.
+# Safe to claim at root: all other swizzin apps expose their APIs under
+# their own subpath prefix (/sonarr/api, /radarr/api, etc).
+location /api/ {
+    proxy_pass              http://127.0.0.1:${SEERR_PORT}/api/;
+    proxy_set_header        X-Real-IP               \$remote_addr;
+    proxy_set_header        Host                    \$http_host;
+    proxy_set_header        X-Forwarded-For         \$proxy_add_x_forwarded_for;
+    proxy_set_header        X-Forwarded-Proto       \$scheme;
+    proxy_http_version      1.1;
 }
 EOF
 
@@ -382,8 +402,35 @@ while true; do
             _seerr_install
             _service
             if $SUDO_MODE; then
-                _nginx
-                _dashboard
+                echo ""
+                echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+                echo "  nginx + swizzin dashboard setup — please read before continuing"
+                echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+                echo ""
+                echo "  The following will be configured:"
+                echo ""
+                echo "  1. /etc/nginx/apps/seerr.conf"
+                echo "     - Proxies https://<host>/seerr/ → seerr on port $SEERR_PORT"
+                echo "     - Adds a root-level 'location /api/' block to handle seerr's"
+                echo "       hardcoded API calls. This is safe as long as no other app on"
+                echo "       this server exposes an nginx location at /api/ — all standard"
+                echo "       swizzin apps use subpath prefixes (/sonarr/api, /radarr/api…)."
+                echo "       If you have a custom app that also claims /api/, they will conflict."
+                echo ""
+                echo "  2. /opt/swizzin/core/custom/profiles.py"
+                echo "     - Appends seerr_meta so seerr appears in the swizzin panel sidebar."
+                echo ""
+                echo "  3. /install/.seerr.lock + panel restart"
+                echo ""
+                read -r -p "  Proceed with nginx + dashboard setup? [yes/skip]: " nginx_confirm
+                if [[ "$nginx_confirm" == "yes" ]]; then
+                    _nginx
+                    _dashboard
+                else
+                    echo "  Skipped. seerr is running on http://$(hostname -f):$SEERR_PORT"
+                    echo "  You can re-run the installer and choose 'install' again to set it up later."
+                fi
+                echo ""
             fi
             break
             ;;

@@ -14,12 +14,12 @@ Each script handles download, build/config (auto-picked free port), and a system
 
 **Remote install (user-level only):**
 ```bash
-bash <(curl -sL "https://github.com/Flawkee/swizzin.apps/raw/main/seerr.sh")
+bash <(curl -sL -H 'Cache-Control: no-cache' "https://github.com/Flawkee/swizzin.apps/raw/main/seerr.sh")
 ```
 
 **Remote install with nginx + swizzin dashboard:**
 ```bash
-sudo bash -c "$(curl -sL 'https://github.com/Flawkee/swizzin.apps/raw/main/seerr.sh')"
+sudo bash -c "$(curl -sL -H 'Cache-Control: no-cache' 'https://github.com/Flawkee/swizzin.apps/raw/main/seerr.sh')"
 ```
 
 Each installer prompts for `install` / `uninstall` / `exit`. On install it prints the bound URL.
