@@ -306,16 +306,76 @@ else
     echo "Proceeding with installation"
 fi
 
+function _show() {
+    lock="$target_home/.install/.seerr.lock"
+    if [[ ! -f "$lock" ]]; then
+        echo "seerr is not installed. Run 'install' first."
+        return
+    fi
+
+    # Read port from env.conf
+    port=""
+    env_conf="$target_home/seerr/env.conf"
+    if [[ -f "$env_conf" ]]; then
+        port="$(grep -E '^PORT=' "$env_conf" | cut -d= -f2)"
+    fi
+
+    # Service status
+    svc_status="$(systemctl_user is-active seerr 2>/dev/null || echo "unknown")"
+
+    # Nginx
+    nginx_conf="/etc/nginx/apps/seerr.conf"
+    if [[ -f "$nginx_conf" ]]; then
+        nginx_status="configured  ($nginx_conf)"
+        url="https://$(hostname -f)/seerr"
+    else
+        nginx_status="not configured"
+        url="http://$(hostname -f):${port:-?}"
+    fi
+
+    # Swizzin panel
+    panel_lock="/install/.seerr.lock"
+    profile_entry=""
+    if [[ -f "$panel_lock" ]] && grep -q "^class seerr_meta:" /opt/swizzin/core/custom/profiles.py 2>/dev/null; then
+        panel_status="configured"
+    else
+        panel_status="not configured"
+    fi
+
+    echo ""
+    echo "=============================="
+    echo "  seerr installation summary"
+    echo "=============================="
+    echo "  Service name  : seerr"
+    echo "  Service status: $svc_status"
+    echo "  Port          : ${port:-unknown}"
+    echo "  URL           : $url"
+    echo "  nginx         : $nginx_status"
+    echo "  swizzin panel : $panel_status"
+    echo ""
+    echo "  Useful commands:"
+    echo "    systemctl --user status seerr"
+    echo "    systemctl --user restart seerr"
+    echo "    journalctl --user -u seerr -f"
+    echo "    tail -f $target_home/.logs/seerr.log"
+    echo "=============================="
+    echo ""
+}
+
 echo "Welcome to the seerr installer..."
 echo ""
 echo "What do you like to do?"
 echo ""
-echo "install = Install seerr"
+echo "show      = Show current installation status and configuration"
+echo "install   = Install seerr"
 echo "uninstall = Completely removes seerr"
-echo "exit = Exits Installer"
+echo "exit      = Exits Installer"
 while true; do
     read -r -p "Enter it here: " choice
     case $choice in
+        "show")
+            _show
+            ;;
         "install")
             clear
             _deps
