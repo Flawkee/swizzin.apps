@@ -74,7 +74,39 @@ _app_is_installed() {
     return 1
 }
 
+# Locate the Radarr binary by inspecting the existing radarr service,
+# then falling back to common install paths.
+_find_radarr_binary() {
+    local bin
+
+    # System-level service (swizzin box install)
+    bin=$(systemctl cat radarr 2>/dev/null | grep -oP '(?<=ExecStart=)\S+' | head -1)
+    [[ -x "$bin" ]] && echo "$bin" && return 0
+
+    # User-level service (installed by these scripts)
+    local user_svc="$target_home/.config/systemd/user/radarr.service"
+    if [[ -f "$user_svc" ]]; then
+        bin=$(grep -oP '(?<=ExecStart=)\S+' "$user_svc" | head -1)
+        bin="${bin//%h/$target_home}"
+        [[ -x "$bin" ]] && echo "$bin" && return 0
+    fi
+
+    # Common paths
+    for p in "/opt/Radarr/Radarr" "$target_home/Radarr/Radarr" "/usr/bin/radarr"; do
+        [[ -x "$p" ]] && echo "$p" && return 0
+    done
+
+    return 1
+}
+
 function _systemd() {
+    local radarr_bin
+    radarr_bin=$(_find_radarr_binary) || {
+        echo "Cannot locate Radarr binary. Is Radarr installed and running?"
+        exit 1
+    }
+    echo "Using Radarr binary: $radarr_bin"
+
     run_as_user "mkdir -p '$target_home/.config/systemd/user/'"
     tmp_unit="$(mktemp)"
     cat > "$tmp_unit" << SERVICE
@@ -85,7 +117,7 @@ After=syslog.target network.target
 [Service]
 Type=simple
 Environment="TMPDIR=%h/.tmp"
-ExecStart=%h/Radarr/Radarr -nobrowser -data=%h/.config/Radarr4k
+ExecStart=$radarr_bin -nobrowser -data=%h/.config/Radarr4k
 TimeoutStopSec=20
 KillMode=process
 Restart=on-failure

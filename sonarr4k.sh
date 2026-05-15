@@ -74,7 +74,39 @@ _app_is_installed() {
     return 1
 }
 
+# Locate the Sonarr binary by inspecting the existing sonarr service,
+# then falling back to common install paths.
+_find_sonarr_binary() {
+    local bin
+
+    # System-level service (swizzin box install)
+    bin=$(systemctl cat sonarr 2>/dev/null | grep -oP '(?<=ExecStart=)\S+' | head -1)
+    [[ -x "$bin" ]] && echo "$bin" && return 0
+
+    # User-level service (installed by these scripts)
+    local user_svc="$target_home/.config/systemd/user/sonarr.service"
+    if [[ -f "$user_svc" ]]; then
+        bin=$(grep -oP '(?<=ExecStart=)\S+' "$user_svc" | head -1)
+        bin="${bin//%h/$target_home}"
+        [[ -x "$bin" ]] && echo "$bin" && return 0
+    fi
+
+    # Common paths
+    for p in "/opt/Sonarr/Sonarr" "$target_home/Sonarr/Sonarr" "/usr/bin/sonarr"; do
+        [[ -x "$p" ]] && echo "$p" && return 0
+    done
+
+    return 1
+}
+
 function _systemd() {
+    local sonarr_bin
+    sonarr_bin=$(_find_sonarr_binary) || {
+        echo "Cannot locate Sonarr binary. Is Sonarr installed and running?"
+        exit 1
+    }
+    echo "Using Sonarr binary: $sonarr_bin"
+
     run_as_user "mkdir -p '$target_home/.config/systemd/user/'"
     tmp_unit="$(mktemp)"
     cat > "$tmp_unit" << SERVICE
@@ -85,7 +117,7 @@ After=syslog.target network.target
 [Service]
 Type=simple
 Environment="TMPDIR=%h/.tmp"
-ExecStart=%h/Sonarr/Sonarr -nobrowser -data=%h/.config/Sonarr4k
+ExecStart=$sonarr_bin -nobrowser -data=%h/.config/Sonarr4k
 WorkingDirectory=%h
 Restart=on-failure
 
