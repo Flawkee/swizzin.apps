@@ -127,12 +127,26 @@ EOF
     rm -f "$tmp_config"
 
     systemctl_user daemon-reload
-    systemctl_user enable --now -q sonarr4k
-    sleep 45
+    systemctl_user enable --now sonarr4k
+    sleep 10
+
+    if ! systemctl_user is-active --quiet sonarr4k; then
+        echo "sonarr4k service failed to start. Check with:"
+        echo "  journalctl --user -u sonarr4k -n 50"
+        exit 1
+    fi
+
+    echo "Waiting for Sonarr 4K to initialise..."
+    sleep 35
 
     apikey=$(grep -oPm1 "(?<=<ApiKey>)[^<]+" "$target_home/.config/Sonarr4k/config.xml")
+    if [[ -z "$apikey" ]]; then
+        echo "ApiKey not yet written to config.xml — Sonarr 4K may still be starting."
+        echo "Check: journalctl --user -u sonarr4k -n 50"
+        exit 1
+    fi
     if ! timeout 45 bash -c -- "while ! curl -fL \"http://127.0.0.1:${SONARR4K_PORT}/sonarr4k/api/v3/system/status?apiKey=${apikey}\" >> \"$log\" 2>&1; do sleep 5; done"; then
-        echo "Sonarr 4K API did not respond. Make sure Sonarr is installed and on v3."
+        echo "Sonarr 4K API did not respond. Check: journalctl --user -u sonarr4k -n 50"
         exit 1
     fi
 

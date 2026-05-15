@@ -133,12 +133,26 @@ EOF
 
     echo "Starting the service"
     systemctl_user daemon-reload
-    systemctl_user enable --now -q radarr4k
-    sleep 45
+    systemctl_user enable --now radarr4k
+    sleep 10
+
+    if ! systemctl_user is-active --quiet radarr4k; then
+        echo "radarr4k service failed to start. Check with:"
+        echo "  journalctl --user -u radarr4k -n 50"
+        exit 1
+    fi
+
+    echo "Waiting for Radarr 4K to initialise..."
+    sleep 35
 
     apikey=$(grep -oPm1 "(?<=<ApiKey>)[^<]+" "$target_home/.config/Radarr4k/config.xml")
+    if [[ -z "$apikey" ]]; then
+        echo "ApiKey not yet written to config.xml — Radarr 4K may still be starting."
+        echo "Check: journalctl --user -u radarr4k -n 50"
+        exit 1
+    fi
     if ! timeout 45 bash -c -- "while ! curl -fL \"http://127.0.0.1:${RADARR4K_PORT}/radarr4k/api/v3/system/status?apiKey=${apikey}\" >> \"$log\" 2>&1; do sleep 5; done"; then
-        echo "Radarr 4K API did not respond. Make sure Radarr is installed and on v3."
+        echo "Radarr 4K API did not respond. Check: journalctl --user -u radarr4k -n 50"
         exit 1
     fi
 
