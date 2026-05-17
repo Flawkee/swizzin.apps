@@ -48,6 +48,49 @@ _netdata_port() {
     echo "19999"
 }
 
+# --- Security ---
+
+function _secure() {
+    local token="$1"
+    local conf="/etc/netdata/netdata.conf"
+
+    echo "Claiming agent to Netdata Cloud..."
+    local claim_script
+    for p in \
+            "/opt/netdata/usr/sbin/netdata-claim.sh" \
+            "/usr/sbin/netdata-claim.sh" \
+            "/usr/lib/netdata/netdata-claim.sh"; do
+        [[ -x "$p" ]] && claim_script="$p" && break
+    done
+
+    if [[ -z "$claim_script" ]]; then
+        echo "Could not find netdata-claim.sh. Skipping cloud claim."
+        echo "Claim manually: https://learn.netdata.cloud/docs/netdata-cloud/connect-agent"
+        return 1
+    fi
+
+    if "$claim_script" -token="$token" -url=https://app.netdata.cloud >> "$log" 2>&1; then
+        echo "Agent claimed to Netdata Cloud."
+    else
+        echo "Claiming failed. Check: $log"
+        echo "You can retry manually:"
+        echo "  sudo $claim_script -token=<your-token> -url=https://app.netdata.cloud"
+        return 1
+    fi
+
+    echo "Enabling Bearer Token Protection..."
+    if grep -q '^\s*bearer token protection' "$conf" 2>/dev/null; then
+        sed -i 's|^\s*bearer token protection\s*=.*|	bearer token protection = yes|' "$conf"
+    elif grep -q '^\[web\]' "$conf" 2>/dev/null; then
+        sed -i '/^\[web\]/a\\tbearer token protection = yes' "$conf"
+    else
+        printf '\n[web]\n\tbearer token protection = yes\n' >> "$conf"
+    fi
+
+    systemctl restart netdata
+    echo "Bearer Token Protection enabled. Dashboard requires Netdata Cloud sign-in."
+}
+
 # --- Install steps ---
 
 function _install() {
@@ -78,6 +121,37 @@ function _install() {
 
     touch /install/.netdata.lock
     echo "Netdata is up on http://127.0.0.1:19999 (nginx will expose it at /netdata)"
+
+    # --- Security setup ---
+    echo ""
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "  Security — your metrics are currently unprotected"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo ""
+    echo "  Anyone who can reach this server can view your metrics."
+    echo "  The recommended way to lock this down is a two-step process:"
+    echo ""
+    echo "  1. Claim this agent to a Netdata Cloud space"
+    echo "     → creates a signed session token tied to your Cloud account"
+    echo "  2. Enable Bearer Token Protection in netdata.conf"
+    echo "     → forces every browser/client to present that token; without"
+    echo "       it the dashboard is rejected even over nginx"
+    echo ""
+    echo "  Get your claim token at https://app.netdata.cloud"
+    echo "  (Space settings → Nodes → Connect a new node → copy the token)"
+    echo ""
+    echo "  Docs: https://learn.netdata.cloud/docs/netdata-agent/configuration/securing-agents"
+    echo ""
+    read -r -p "  Enter your Netdata Cloud claim token (press Enter to skip): " claim_token
+    if [[ -n "$claim_token" ]]; then
+        _secure "$claim_token"
+    else
+        echo ""
+        echo "  WARNING: security setup skipped. Dashboard is accessible to anyone"
+        echo "  who can reach https://$(hostname -f)/netdata (once nginx is configured)."
+        echo "  Re-run this installer and choose 'secure' to set it up later."
+    fi
+    echo ""
 }
 
 function _nginx() {
@@ -174,6 +248,17 @@ function _show() {
     local netdata_version=""
     netdata_version=$(netdata -v 2>/dev/null | awk '{print $2}')
 
+    local bearer_status="disabled (dashboard is unprotected)"
+    if grep -q 'bearer token protection\s*=\s*yes' /etc/netdata/netdata.conf 2>/dev/null; then
+        bearer_status="enabled (requires Netdata Cloud sign-in)"
+    fi
+
+    local cloud_status="not claimed"
+    if [[ -f "/var/lib/netdata/cloud.d/claimed_id" ]] || \
+       [[ -f "/opt/netdata/var/lib/netdata/cloud.d/claimed_id" ]]; then
+        cloud_status="claimed"
+    fi
+
     echo ""
     echo "=============================="
     echo "  Netdata installation summary"
@@ -185,6 +270,8 @@ function _show() {
     echo "  URL           : $url"
     echo "  nginx         : $nginx_status"
     echo "  swizzin panel : $panel_status"
+    echo "  Cloud claim   : $cloud_status"
+    echo "  Bearer token  : $bearer_status"
     echo ""
     echo "  Useful commands:"
     echo "    systemctl status netdata"
@@ -275,6 +362,7 @@ echo "What do you like to do?"
 echo ""
 echo "show      = Show current installation status and configuration"
 echo "install   = Install Netdata"
+echo "secure    = Claim agent to Netdata Cloud + enable Bearer Token Protection"
 echo "upgrade   = Upgrade Netdata to latest stable"
 echo "uninstall = Completely removes Netdata"
 echo "exit      = Exits Installer"
@@ -283,6 +371,27 @@ while true; do
     case $choice in
         "show")
             _show
+            ;;
+        "secure")
+            if ! $SUDO_MODE; then
+                echo "secure requires sudo."
+                break
+            fi
+            if ! systemctl is-active --quiet netdata 2>/dev/null; then
+                echo "Netdata is not running. Install it first."
+                break
+            fi
+            echo ""
+            echo "  Get your claim token at https://app.netdata.cloud"
+            echo "  (Space settings → Nodes → Connect a new node → copy the token)"
+            echo ""
+            read -r -p "  Enter your Netdata Cloud claim token: " claim_token
+            if [[ -n "$claim_token" ]]; then
+                _secure "$claim_token"
+            else
+                echo "No token entered. Aborted."
+            fi
+            break
             ;;
         "install")
             if [[ -f "/install/.netdata.lock" ]] || systemctl is-active --quiet netdata 2>/dev/null; then
