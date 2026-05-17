@@ -197,15 +197,31 @@ function _show() {
 
 function _remove() {
     echo "Uninstalling Netdata..."
-    if command -v netdata-uninstaller > /dev/null 2>&1; then
-        netdata-uninstaller --yes --force >> "$log" 2>&1 || true
-    elif [[ -f "/usr/libexec/netdata/netdata-uninstaller.sh" ]]; then
-        bash /usr/libexec/netdata/netdata-uninstaller.sh --yes --force >> "$log" 2>&1 || true
+
+    # Official recommended method: re-run kickstart with --uninstall.
+    # It auto-detects the install type (native pkg vs static build) and
+    # locates the correct uninstaller, downloading it from GitHub if needed.
+    if bash <(curl -Ss https://my-netdata.io/kickstart.sh) --uninstall >> "$log" 2>&1; then
+        echo "Netdata uninstalled."
     else
-        systemctl stop netdata 2>/dev/null || true
-        systemctl disable netdata 2>/dev/null || true
-        echo "Could not find netdata-uninstaller. Stopped the service."
-        echo "You may need to remove Netdata packages manually."
+        # Offline / download-failed fallback: try known local uninstaller paths.
+        local env_file="/etc/netdata/.environment"
+        local uninstalled=false
+        for script in \
+                "/opt/netdata/usr/libexec/netdata/netdata-uninstaller.sh" \
+                "/usr/libexec/netdata/netdata-uninstaller.sh"; do
+            if [[ -f "$script" ]]; then
+                bash "$script" --yes --force --env "$env_file" >> "$log" 2>&1 \
+                    && uninstalled=true && break
+            fi
+        done
+        if ! $uninstalled; then
+            echo "Could not run the Netdata uninstaller automatically."
+            echo "Stopping the service. Remove Netdata packages manually if needed."
+            echo "Check $log for details."
+            systemctl stop netdata 2>/dev/null || true
+            systemctl disable netdata 2>/dev/null || true
+        fi
     fi
 
     rm -f /etc/nginx/apps/netdata.conf
