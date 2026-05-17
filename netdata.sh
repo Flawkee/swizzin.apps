@@ -52,7 +52,7 @@ _netdata_port() {
 
 function _install() {
     echo "Running Netdata kickstart installer..."
-    if ! bash <(curl -Ss https://my-netdata.io/kickstart.sh) \
+    if ! bash <(curl -sSL https://my-netdata.io/kickstart.sh) \
             --non-interactive \
             --stable-channel \
             --no-updates \
@@ -201,7 +201,7 @@ function _remove() {
     # Official recommended method: re-run kickstart with --uninstall.
     # It auto-detects the install type (native pkg vs static build) and
     # locates the correct uninstaller, downloading it from GitHub if needed.
-    if bash <(curl -Ss https://my-netdata.io/kickstart.sh) --uninstall >> "$log" 2>&1; then
+    if bash <(curl -sSL https://my-netdata.io/kickstart.sh) --uninstall >> "$log" 2>&1; then
         echo "Netdata uninstalled."
     else
         # Offline / download-failed fallback: try known local uninstaller paths.
@@ -245,7 +245,7 @@ PY
 
 function _upgrade() {
     echo "Upgrading Netdata via kickstart..."
-    if ! bash <(curl -Ss https://my-netdata.io/kickstart.sh) \
+    if ! bash <(curl -sSL https://my-netdata.io/kickstart.sh) \
             --non-interactive \
             --stable-channel \
             --no-updates \
