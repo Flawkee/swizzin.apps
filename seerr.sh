@@ -59,6 +59,16 @@ systemctl_user() {
     fi
 }
 
+# Ensure systemd --user services survive logout.
+_check_linger() {
+    if loginctl show-user "$target_user" 2>/dev/null | grep -q 'Linger=yes'; then
+        return 0
+    fi
+    echo "Linger is not enabled for $target_user — enabling now..."
+    loginctl enable-linger "$target_user"
+    echo "Linger enabled for $target_user."
+}
+
 # --- Install steps -----------------------------------------------------------
 function _deps() {
     if [[ ! -d "$target_home/.nvm" ]]; then
@@ -134,6 +144,7 @@ function _port() {
 }
 
 function _service() {
+    _check_linger
     run_as_user "mkdir -p '$target_home/.config/systemd/user' '$target_home/.install' '$target_home/.config/seerr'"
 
     node_path="$(run_as_user 'export NVM_DIR="$HOME/.nvm"; [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"; which node' | tail -n1)"

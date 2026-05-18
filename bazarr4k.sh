@@ -64,6 +64,16 @@ function _port() {
     comm -23 <(seq "${LOW_BOUND}" "${UPPER_BOUND}" | sort) <(ss -Htan | awk '{print $4}' | cut -d':' -f2 | sort -u) | shuf | head -n 1
 }
 
+# Ensure systemd --user services survive logout.
+_check_linger() {
+    if loginctl show-user "$target_user" 2>/dev/null | grep -q 'Linger=yes'; then
+        return 0
+    fi
+    echo "Linger is not enabled for $target_user — enabling now..."
+    loginctl enable-linger "$target_user"
+    echo "Linger enabled for $target_user."
+}
+
 # Check if an app is installed via lock file (user or system level) or running process.
 # Usage: _app_is_installed <lockname> <process-search-term>
 _app_is_installed() {
@@ -157,6 +167,7 @@ SERVICE
 }
 
 function _install() {
+    _check_linger
     if ! _app_is_installed "bazarr" "bazarr"; then
         echo "Bazarr is not installed. Exiting..."
         exit 1

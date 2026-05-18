@@ -14,8 +14,6 @@ Each script handles download, build/config, and a systemd service. Run with `sud
 | [sonarr4k.sh](sonarr4k.sh) | Sonarr 4K | `/sonarr4k` | Second Sonarr instance for 4K content. Requires Sonarr already installed. |
 | [radarr4k.sh](radarr4k.sh) | Radarr 4K | `/radarr4k` | Second Radarr instance for 4K content. Requires Radarr already installed. |
 | [bazarr4k.sh](bazarr4k.sh) | Bazarr 4K | `/bazarr4k` | Second Bazarr instance for 4K content. Requires Bazarr already installed. |
-| [unpackerr.sh](unpackerr.sh) | Unpackerr | `/unpackerr` | Auto-detects installed arrs (Sonarr, Radarr, Lidarr) and wires their API keys into the config. |
-| [unpackerr4k.sh](unpackerr4k.sh) | Unpackerr 4K | `/unpackerr4k` | Separate Unpackerr instance wired to sonarr4k + radarr4k. Reuses the base Unpackerr binary. |
 | [netdata.sh](netdata.sh) | Netdata | `/netdata` | System-wide monitoring. Installs via official kickstart.sh. **Always requires sudo.** |
 
 ## Usage
