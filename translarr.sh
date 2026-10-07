@@ -12,6 +12,9 @@ FFMPEG_ARG=""
 FFPROBE_ARG=""
 MKVEXTRACT_ARG=""
 GITHUB_TOKEN_FILE="${TRANSLARR_GITHUB_TOKEN_FILE:-}"
+DOTNET_SDK_VERSION="10.0.112"
+DOTNET_RUNTIME_VERSION="10.0.12"
+NODE_VERSION="24.21.0"
 
 usage() {
     cat <<'EOF'
@@ -41,6 +44,12 @@ When run through sudo on Swizzin, the installer installs FFmpeg, FFprobe, and
 MKVToolNix from the host package repository. Exact executable paths remain optional.
 Private repositories may use the Swizzin user's SSH configuration or a protected
 GitHub token file. Authentication is applied only while staging the repository.
+The native .NET engine is built before the existing service is stopped. An installed
+.NET 10+ SDK is reused; otherwise Microsoft's pinned SDK is cached for this user.
+The React frontend is built with Node.js before publishing. An installed compatible
+Node.js is reused; otherwise a checksum-verified official release is cached per user.
+The published app includes its .NET runtime and static UI; Python and Node.js are
+not required to run it.
 EOF
 }
 
@@ -139,6 +148,8 @@ APP_DIR="$SHARE_DIR/app"
 DATA_DIR="$SHARE_DIR/data"
 TOOLS_DIR="$SHARE_DIR/tools"
 BACKUP_DIR="$SHARE_DIR/backups"
+SDK_DIR="$SHARE_DIR/sdk/$DOTNET_SDK_VERSION"
+NODE_DIR="$SHARE_DIR/node/$NODE_VERSION"
 LOCK_FILE="$SHARE_DIR/.installed"
 NGINX_FILE="/etc/nginx/apps/translarr.conf"
 PANEL_PROFILES="/opt/swizzin/core/custom/profiles.py"
@@ -180,20 +191,12 @@ ensure_dirs() {
 check_base_dependencies() {
     local missing=()
     local command_name
-    for command_name in git python3 curl tar ss base64 stat tee; do
+    for command_name in git curl tar xz ss base64 stat tee sha256sum; do
         command -v "$command_name" >/dev/null 2>&1 || missing+=("$command_name")
     done
     if ((${#missing[@]})); then
         echo "Missing installer dependencies: ${missing[*]}" >&2
-        echo "Install git, Python 3.11+, python3-venv, curl, tar, iproute2, and coreutils, then retry." >&2
-        exit 1
-    fi
-    if ! python3 -c 'import sys; raise SystemExit(sys.version_info < (3, 11))'; then
-        echo "Translarr requires Python 3.11 or newer." >&2
-        exit 1
-    fi
-    if ! python3 -m venv --help >/dev/null 2>&1; then
-        echo "Python's venv module is missing. Install python3-venv, then retry." >&2
+        echo "Install git, curl, tar, xz-utils, iproute2, and coreutils, then retry." >&2
         exit 1
     fi
 }
@@ -326,6 +329,138 @@ configure_tools() {
     done
 }
 
+ensure_dotnet_sdk() {
+    local candidate version installer install_status=0
+    candidate="$(as_user sh -c 'command -v dotnet' 2>/dev/null || true)"
+    if [[ -n "$candidate" ]]; then
+        version="$(as_user "$candidate" --version 2>/dev/null || true)"
+        if [[ "$version" =~ ^([0-9]+)\. ]] && (( BASH_REMATCH[1] >= 10 )); then
+            printf '%s\n' "$candidate"
+            return 0
+        fi
+    fi
+    candidate="$SDK_DIR/dotnet"
+    if [[ -x "$candidate" ]] && as_user "$candidate" --list-sdks 2>/dev/null | grep -q "^${DOTNET_SDK_VERSION} "; then
+        printf '%s\n' "$candidate"
+        return 0
+    fi
+    echo "Preparing Microsoft .NET SDK $DOTNET_SDK_VERSION in $SDK_DIR (no system-wide SDK installation)." >&2
+    installer="$(as_user mktemp "$SHARE_DIR/.dotnet-install.XXXXXX")" || return 1
+    if ! as_user curl --proto '=https' --proto-redir '=https' --tlsv1.2 --fail --silent --show-error \
+        --location --connect-timeout 20 --max-time 180 \
+        --output "$installer" https://dot.net/v1/dotnet-install.sh; then
+        as_user rm -f "$installer"
+        return 1
+    fi
+    as_user bash "$installer" --version "$DOTNET_SDK_VERSION" --install-dir "$SDK_DIR" \
+        --no-path >&2 || install_status=$?
+    as_user rm -f "$installer"
+    if (( install_status != 0 )) || ! as_user "$candidate" --version >&2; then
+        echo "The per-user .NET SDK could not start. Check the Microsoft Debian/Ubuntu native-library requirements." >&2
+        return 1
+    fi
+    printf '%s\n' "$candidate"
+}
+
+ensure_node() {
+    local candidate binary_dir architecture checksum stage archive
+    candidate="$(as_user sh -c 'command -v node' 2>/dev/null || true)"
+    if [[ -n "$candidate" ]] && as_user "$candidate" -e 'const [major,minor]=process.versions.node.split(".").map(Number);process.exit(major>=24||(major===22&&minor>=12)?0:1)' >/dev/null 2>&1; then
+        binary_dir="$(dirname "$candidate")"
+        if as_user env PATH="$binary_dir:$PATH" npm --version >/dev/null 2>&1; then
+            printf '%s\n' "$binary_dir"
+            return 0
+        fi
+    fi
+    if [[ -x "$NODE_DIR/bin/node" && -x "$NODE_DIR/bin/npm" ]] && [[ "$(as_user "$NODE_DIR/bin/node" --version)" == "v$NODE_VERSION" ]]; then
+        printf '%s\n' "$NODE_DIR/bin"
+        return 0
+    fi
+    case "$(uname -m)" in
+        x86_64) architecture=x64; checksum=fd8e59d5a511510f6a298afb548f18c7d2b1be404d8b4a27d94fbe49f56cb2d6 ;;
+        aarch64|arm64) architecture=arm64; checksum=6ad1325edbdb5649c379b75a237147a666c95d4f9ae8d340fef2d1575d289ad2 ;;
+        *) echo "Node.js build tools require Linux x86_64 or arm64." >&2; return 1 ;;
+    esac
+    echo "Preparing official Node.js $NODE_VERSION build tools (no system-wide installation)." >&2
+    stage="$(as_user mktemp -d "$SHARE_DIR/.node.XXXXXX")" || return 1
+    archive="$stage/node.tar.xz"
+    if ! as_user curl --proto '=https' --proto-redir '=https' --tlsv1.2 --fail --silent --show-error \
+        --location --connect-timeout 20 --max-time 300 --output "$archive" \
+        "https://nodejs.org/dist/v$NODE_VERSION/node-v$NODE_VERSION-linux-$architecture.tar.xz"; then
+        as_user rm -rf "$stage"
+        return 1
+    fi
+    if ! printf '%s  %s\n' "$checksum" "$archive" | as_user sha256sum --check --status; then
+        echo "Node.js archive checksum did not match the pinned official release; staging cancelled." >&2
+        as_user rm -rf "$stage"
+        return 1
+    fi
+    as_user mkdir -p "$stage/root" "$SHARE_DIR/node"
+    if ! as_user tar -xJf "$archive" -C "$stage/root" --strip-components=1; then
+        as_user rm -rf "$stage"
+        return 1
+    fi
+    if [[ "$(as_user "$stage/root/bin/node" --version)" != "v$NODE_VERSION" ]]; then
+        echo "The staged Node.js build tools cannot run on this host." >&2
+        as_user rm -rf "$stage"
+        return 1
+    fi
+    if [[ -e "$NODE_DIR" ]]; then
+        as_user mv "$NODE_DIR" "$SHARE_DIR/node/replaced-$NODE_VERSION-$(date +%Y%m%d-%H%M%S)" || return 1
+    fi
+    as_user mv "$stage/root" "$NODE_DIR" || return 1
+    as_user rm -rf "$stage"
+    printf '%s\n' "$NODE_DIR/bin"
+}
+
+stage_frontend() {
+    local stage="$1" node_bin
+    if [[ ! -f "$stage/frontend/package-lock.json" ]]; then
+        echo "This release is missing the React frontend dependency lockfile." >&2
+        return 1
+    fi
+    node_bin="$(ensure_node)" || return 1
+    as_user env PATH="$node_bin:$PATH" npm --prefix "$stage/frontend" ci --no-fund --no-audit >&2 || return 1
+    as_user env PATH="$node_bin:$PATH" npm --prefix "$stage/frontend" run build >&2 || return 1
+    [[ -f "$stage/frontend/dist/index.html" ]] || { echo "The frontend build did not produce index.html." >&2; return 1; }
+}
+
+stage_native_engine() {
+    local stage="$1" runtime sdk
+    case "$(uname -m)" in
+        x86_64) runtime=linux-x64 ;;
+        aarch64|arm64) runtime=linux-arm64 ;;
+        *) echo "The native Translarr release supports Linux x86_64 and arm64." >&2; return 1 ;;
+    esac
+    if [[ ! -x "$stage/.engine/Translarr.Engine" ]]; then
+        if [[ ! -f "$stage/engine/Translarr.Engine/Translarr.Engine.csproj" ]]; then
+            echo "This release has no native Translarr engine project or published binary." >&2
+            return 1
+        fi
+        stage_frontend "$stage" || return 1
+        sdk="$(ensure_dotnet_sdk)" || return 1
+        echo "Publishing the self-contained $runtime engine with runtime $DOTNET_RUNTIME_VERSION..." >&2
+        if ! as_user env DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_NOLOGO=1 \
+            "$sdk" publish "$stage/engine/Translarr.Engine/Translarr.Engine.csproj" \
+            --configuration Release --runtime "$runtime" --self-contained true \
+            -p:RuntimeFrameworkVersion="$DOTNET_RUNTIME_VERSION" \
+            --output "$stage/.engine" >&2; then
+            return 1
+        fi
+    fi
+    if [[ ! -f "$stage/.engine/ui/index.html" || ! -d "$stage/.engine/ui/assets" ]]; then
+        echo "The published native engine is missing its React frontend/assets." >&2
+        return 1
+    fi
+    if [[ -f "$stage/THIRD_PARTY_NOTICES.md" ]]; then
+        as_user cp -- "$stage/THIRD_PARTY_NOTICES.md" "$stage/.engine/THIRD_PARTY_NOTICES.md" || return 1
+    fi
+    if ! as_user "$stage/.engine/Translarr.Engine" --help >&2; then
+        echo "The native engine cannot start on this host; the installed service has not been stopped." >&2
+        return 1
+    fi
+}
+
 stage_release() {
     local stage
     stage="$(as_user mktemp -d "$SHARE_DIR/.stage.XXXXXX")"
@@ -334,19 +469,7 @@ stage_release() {
         as_user rm -rf "$stage"
         return 1
     fi
-    if ! as_user python3 -m venv "$stage/.venv"; then
-        as_user rm -rf "$stage"
-        return 1
-    fi
-    if ! as_user "$stage/.venv/bin/python" -m pip install --quiet --upgrade pip; then
-        as_user rm -rf "$stage"
-        return 1
-    fi
-    if ! as_user "$stage/.venv/bin/python" -m pip install --quiet "$stage"; then
-        as_user rm -rf "$stage"
-        return 1
-    fi
-    if ! as_user "$stage/.venv/bin/python" -c 'import translarr; import translarr.cli'; then
+    if ! stage_native_engine "$stage"; then
         as_user rm -rf "$stage"
         return 1
     fi
@@ -410,7 +533,12 @@ clone_repository() {
 
 write_unit() {
     local tmp service_command
-    if as_user "$APP_DIR/.venv/bin/python" -m translarr run --help >/dev/null 2>&1; then
+    if [[ -x "$APP_DIR/.engine/Translarr.Engine" ]]; then
+        service_command="\"$APP_DIR/.engine/Translarr.Engine\" run"
+    elif [[ -f "$APP_DIR/engine/Translarr.Engine/Translarr.Engine.csproj" ]]; then
+        echo "The active release is missing its published engine; refusing to start the old Python backend." >&2
+        return 1
+    elif as_user "$APP_DIR/.venv/bin/python" -m translarr run --help >/dev/null 2>&1; then
         service_command="$APP_DIR/.venv/bin/python -m translarr run --workers 2"
     else
         service_command="$APP_DIR/.venv/bin/python -m translarr serve"
@@ -425,11 +553,12 @@ After=network-online.target
 [Service]
 Type=exec
 EnvironmentFile=$ENV_FILE
+Environment="TRANSLARR_UI_DIR=$APP_DIR/.engine/ui"
 WorkingDirectory=$APP_DIR
 ExecStart=$service_command
 Restart=on-failure
 RestartSec=5
-TimeoutStopSec=30
+TimeoutStopSec=90
 NoNewPrivileges=true
 PrivateTmp=true
 UMask=0077
@@ -437,7 +566,10 @@ UMask=0077
 [Install]
 WantedBy=default.target
 EOF
-    install_for_user 0644 "$tmp" "$UNIT_FILE"
+    if ! install_for_user 0644 "$tmp" "$UNIT_FILE"; then
+        rm -f "$tmp"
+        return 1
+    fi
     rm -f "$tmp"
     systemctl_user disable translarr-worker 2>/dev/null || true
     as_user rm -f "$LEGACY_WORKER_UNIT_FILE"
@@ -454,14 +586,15 @@ start_service() {
 }
 
 health_wait() {
-    local port health_path
+    local port health_path deadline
     port="$(env_value TRANSLARR_PORT)"
-    if as_user "$APP_DIR/.venv/bin/python" -m translarr run --help >/dev/null 2>&1; then
+    if [[ -x "$APP_DIR/.engine/Translarr.Engine" ]] || as_user "$APP_DIR/.venv/bin/python" -m translarr run --help >/dev/null 2>&1; then
         health_path="/health/ready"
     else
         health_path="/health"
     fi
-    for _ in {1..30}; do
+    deadline=$((SECONDS + 150))
+    while (( SECONDS < deadline )); do
         if curl -fsS --max-time 3 "http://127.0.0.1:${port}${health_path}" >/dev/null 2>&1; then
             return 0
         fi
@@ -544,8 +677,10 @@ class translarr_meta:
     runas = "user"
 EOF
     fi
-    if [[ -f "$APP_DIR/src/translarr/static/logo.png" ]]; then
-        install -D -m 0644 "$APP_DIR/src/translarr/static/logo.png" \
+    local logo="$APP_DIR/.engine/ui/logo.png"
+    [[ -f "$logo" ]] || logo="$APP_DIR/src/translarr/static/logo.png"
+    if [[ -f "$logo" ]]; then
+        install -D -m 0644 "$logo" \
             /opt/swizzin/static/img/apps/translarr.png
     fi
     touch /install/.translarr.lock
@@ -559,17 +694,11 @@ remove_proxy_dashboard() {
     fi
     rm -f "$NGINX_FILE" /install/.translarr.lock /opt/swizzin/static/img/apps/translarr.png
     if [[ -f "$PANEL_PROFILES" ]]; then
-        PANEL_PROFILES="$PANEL_PROFILES" python3 - <<'PY'
-import os
-import re
-
-path = os.environ["PANEL_PROFILES"]
-with open(path, encoding="utf-8") as handle:
-    text = handle.read()
-text = re.sub(r"\n*class translarr_meta:.*?(?=\nclass |\Z)", "", text, flags=re.S)
-with open(path, "w", encoding="utf-8") as handle:
-    handle.write(text.rstrip() + "\n")
-PY
+        local profiles_tmp
+        profiles_tmp="$(mktemp)"
+        awk '/^class translarr_meta:/ { skipping = 1; next } /^class / { skipping = 0 } !skipping { print }' "$PANEL_PROFILES" >"$profiles_tmp"
+        install -m 0644 "$profiles_tmp" "$PANEL_PROFILES"
+        rm -f "$profiles_tmp"
     fi
     if command -v nginx >/dev/null 2>&1 && nginx -t >/dev/null 2>&1; then
         systemctl reload nginx
@@ -621,12 +750,23 @@ upgrade_app() {
     stamp="$(date +%Y%m%d-%H%M%S)"
     backup="$BACKUP_DIR/pre-upgrade-$stamp"
     stop_service
-    snapshot_state "$backup"
-    as_user mv "$APP_DIR" "$backup/app"
-    as_user mv "$stage" "$APP_DIR"
-    write_unit
-    start_service
-    if health_wait; then
+    if ! snapshot_state "$backup"; then
+        start_service || true
+        echo "State backup failed; the existing release was kept and restarted. Staged code remains at $stage." >&2
+        return 1
+    fi
+    if ! as_user mv "$APP_DIR" "$backup/app"; then
+        start_service || true
+        echo "Could not retain the old application code; upgrade cancelled." >&2
+        return 1
+    fi
+    if ! as_user mv "$stage" "$APP_DIR"; then
+        as_user mv "$backup/app" "$APP_DIR"
+        start_service || true
+        echo "Could not activate the staged release; the previous code was restored." >&2
+        return 1
+    fi
+    if write_unit && start_service && health_wait; then
         echo "Upgrade succeeded. Rollback backup retained at $backup"
         configure_nginx
         configure_dashboard
@@ -669,6 +809,7 @@ rollback_app() {
     stamp="$(date +%Y%m%d-%H%M%S)"
     current="$BACKUP_DIR/pre-rollback-$stamp"
     echo "Rolling back to $selected"
+    echo "This restores the selected backup's database and credentials; newer state is retained only in $current." >&2
     stop_service
     snapshot_state "$current"
     as_user mv "$APP_DIR" "$current/app"
