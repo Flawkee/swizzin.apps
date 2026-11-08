@@ -1,1 +1,7 @@
 translarr.sh text eol=lf
+meowdb-tracker.sh text eol=lf
+pitzotzstory.sh text eol=lf
+tests/meowdb-tracker-test.sh text eol=lf
+tests/meowdb-tracker-auth-test.sh text eol=lf
+tests/meowdb-tracker-uninstall-test.sh text eol=lf
+tests/pitzotzstory-migration-test.sh text eol=lf

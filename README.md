@@ -85,3 +85,32 @@ journalctl -u netdata -f
 - Seerr: built in place at `~/seerr/`
 - FlareSolverr: pre-built at `~/flaresolverr/`
 - Netdata: system-wide via official kickstart
+
+## PitzotzStory installer
+
+`pitzotzstory.sh` installs the React / ASP.NET Core 10 marketplace tracker as one rootless user service. It follows the Translarr lifecycle: staged self-contained builds, retained port/config/data, backups, health checks and rollback, an NGINX `/PitzotzStory/` path with WebSocket support, and a Swizzin panel icon/profile. Authentication is handled by the app (Emby and local user accounts).
+
+`install` also creates and starts the separate `pitzotzstory-companion` marketplace companion. It reuses `~/flaresolverr` when its runtime is v3.5.2, otherwise prepares a private pinned runtime under the tracker's share directory. With sudo, missing Python/venv, Chromium and Xvfb packages are installed automatically; without sudo, missing dependencies are reported before activation. The existing ARR `flaresolverr` service is left alone. A new companion prefers loopback port 8199, falls back to a free port, and prints its URL for the marketplace companion fields in app Settings.
+
+`upgrade` automatically backs up the existing companion modules/configuration, stops it, copies all three helpers from the newly published tracker, restarts it and checks `/health`. Existing service settings, ports, credentials and browser caches are preserved. Failed activation restores the previous companion together with the previous tracker; manual rollback also restores matching companion backups when available. Nonstandard companion entry points are reported before replacing anything. Uninstall removes both the tracker and its marketplace companion, including older manually installed `cozy-flaresolverr` units, their drop-ins, configuration, database, keys, backups, dedicated runtimes and browser state. It asks for `REMOVE` confirmation (`--yes` skips the prompt). Export a backup outside the app directories first. Separate FlareSolverr/ARR installations and shared system packages are retained.
+
+```bash
+sudo bash pitzotzstory.sh --source /path/to/meowdb-tracker install
+```
+
+For the private `Flawkee/meowdb-tracker` repository, create a fine-grained GitHub PAT granting **Contents: read** on that repository, then enter it without putting it in shell history:
+
+```bash
+read -rsp 'GitHub PAT: ' MEOWDB_GITHUB_TOKEN; echo
+export MEOWDB_GITHUB_TOKEN
+sudo --preserve-env=MEOWDB_GITHUB_TOKEN bash pitzotzstory.sh install
+unset MEOWDB_GITHUB_TOKEN
+```
+
+Use the same command with `upgrade` for updates. The installer accepts `PITZOTZSTORY_GITHUB_TOKEN`, then `MEOWDB_GITHUB_TOKEN`, then `GH_TOKEN`, then `GITHUB_TOKEN`. With sudo, preserve the variable you use. Alternatively, save the PAT in a private file (`chmod 600`) and pass `--github-token-file /absolute/path/to/token` (or `MEOWDB_GITHUB_TOKEN_FILE`, preserved through sudo). The file takes priority over token environment variables. Tokens are used only for HTTPS clones from `github.com`, through a temporary mode-600 Git configuration removed after success or failure. They are not stored in the clone URL, the app environment file, or the service unit. Supply credentials for each install/upgrade. SSH URLs and `--source` remain supported.
+
+Use `--repo OWNER/REPO` to select a different app repository. Other actions are `upgrade`, `rollback`, `show`, `uninstall` (complete removal of the app, companion and all saved state), and `purge` (alias for uninstall). Use `--no-proxy` to manage nginx and the dashboard separately. The server needs HTTPS for production cookies and Web Push. Read the setup-code file indicated by `show` to claim the first-run setup page. Full app, Emby, cookie export, and container/Ingress instructions are in the tracker project's README.
+
+## PitzotzStory
+
+The canonical installer is `pitzotzstory.sh`; `meowdb-tracker.sh` remains an identical compatibility entry point. Run `sudo bash pitzotzstory.sh upgrade` to migrate existing installations. Services: `pitzotzstory` and `pitzotzstory-companion`; URL: `/PitzotzStory/`; nginx: `/etc/nginx/apps/pitzotzstory.conf`. Original encrypted data, keys and service definitions are archived before migration. Legacy directory aliases preserve virtualenv paths and older rollback archives. Old services are disabled and replaced. Use the same GitHub repository and existing token variables.
